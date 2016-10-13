@@ -290,8 +290,8 @@ func (c *Coordinator) set(assignments *sarama.ConsumerGroupMemberAssignment) err
 			}
 			// start handling new topic-partition.
 			ctx, cancel := context.WithCancel(c.ctx)
-			c.cfg.Consume(ctx, topic, partition)
 			c.cancels[topic][partition] = cancel
+			go c.cfg.Consume(ctx, topic, partition)
 		}
 	}
 	return nil
