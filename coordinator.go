@@ -22,6 +22,12 @@ type ProtocolKey struct {
 	Key      string
 }
 
+// Consume is a function the Coordinator will call when it becomes responsible
+// for a new topic-partition. The provided context will be canceled when the
+// Coordinator is no longer responsible for the topic-partition. This function
+// is expected not to block.
+type Consume func(ctx context.Context, topic string, partition int32)
+
 // Config is used to create a new Coordinator.
 type Config struct {
 	Client         sarama.Client
@@ -30,7 +36,7 @@ type Config struct {
 	SessionTimeout time.Duration
 	Heartbeat      time.Duration
 	Topics         []string
-	MakeConsumer   MakeConsumer
+	Consume        Consume
 }
 
 // Coordinator implements a Kafka GroupConsumer with semantics available
@@ -284,7 +290,7 @@ func (c *Coordinator) set(assignments *sarama.ConsumerGroupMemberAssignment) err
 			}
 			// start handling new topic-partition.
 			ctx, cancel := context.WithCancel(c.ctx)
-			c.cfg.MakeConsumer(ctx, topic, partition)
+			c.cfg.Consume(ctx, topic, partition)
 			c.cancels[topic][partition] = cancel
 		}
 	}
