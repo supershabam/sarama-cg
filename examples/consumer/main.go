@@ -57,6 +57,7 @@ func main() {
 		<-done
 		cancel()
 		<-done // if we receive a second signal, let's exit hard.
+		os.Exit(1)
 	}()
 	err = coord.Run(ctx)
 	if err != nil {
