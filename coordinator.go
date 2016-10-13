@@ -56,21 +56,20 @@ type Coordinator struct {
 
 // NewCoordinator creates a Kafka GroupConsumer.
 func NewCoordinator(cfg *Config) *Coordinator {
-	ctx, cancel := context.WithCancel(context.Background())
 	c := &Coordinator{
-		cancel:  cancel,
 		cancels: map[string]map[int32]func(){},
 		client:  cfg.Client,
 		cfg:     cfg,
-		ctx:     ctx,
 	}
-	go c.run()
 	return c
 }
 
-// Close unsubscribes from the consumer group.
-func (c *Coordinator) Close() error {
-	c.cancel()
+// Run executes the Coordinator until an error or the provided context
+// is done.
+func (c *Coordinator) Run(ctx context.Context) error {
+	c.ctx = ctx
+	c.run()
+	<-ctx.Done()
 	c.wg.Wait()
 	return c.err
 }
