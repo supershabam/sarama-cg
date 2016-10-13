@@ -3,7 +3,6 @@ package cg
 import (
 	"context"
 	"fmt"
-	"sync"
 	"time"
 
 	"github.com/Shopify/sarama"
@@ -42,16 +41,11 @@ type Config struct {
 // Coordinator implements a Kafka GroupConsumer with semantics available
 // after Kafka 0.9.
 type Coordinator struct {
-	cancel  func()
 	cancels map[string]map[int32]func()
 	client  sarama.Client
 	cfg     *Config
-	ctx     context.Context
-	err     error
 	gid     int32
-	m       sync.Mutex
 	mid     string
-	wg      sync.WaitGroup
 }
 
 // NewCoordinator creates a Kafka GroupConsumer.
@@ -66,12 +60,19 @@ func NewCoordinator(cfg *Config) *Coordinator {
 
 // Run executes the Coordinator until an error or the provided context
 // is done.
-func (c *Coordinator) Run(ctx context.Context) error {
-	c.ctx = ctx
-	c.run()
-	<-ctx.Done()
-	c.wg.Wait()
-	return c.err
+func (c *Coordinator) Run(outerCtx context.Context) error {
+	ctx, cancel := context.WithCancel(outerCtx)
+	// ensure that ctx is canceled so that it propagates to all the Consume functions we've called.
+	defer cancel()
+	runErr := c.run(ctx)
+	leaveErr := c.leaveGroup()
+	if runErr != nil {
+		return runErr
+	}
+	if leaveErr != nil {
+		return leaveErr
+	}
+	return nil
 }
 
 // groupAssignments is only called by the leader and is responsible for assigning
@@ -113,12 +114,12 @@ func (c *Coordinator) groupAssignments(resp *sarama.JoinGroupResponse) (map[stri
 	return map[string]*sarama.ConsumerGroupMemberAssignment{}, fmt.Errorf("unhandled protocol")
 }
 
-func (c *Coordinator) heartbeat() error {
+func (c *Coordinator) heartbeat(ctx context.Context) error {
 	t := time.NewTicker(c.cfg.Heartbeat)
 	defer t.Stop()
 	for {
 		select {
-		case <-c.ctx.Done():
+		case <-ctx.Done():
 			return nil
 		case <-t.C:
 			b, err := c.client.Coordinator(c.cfg.GroupID)
@@ -227,45 +228,33 @@ func (c *Coordinator) joinGroupRequest() (*sarama.JoinGroupRequest, error) {
 	return req, nil
 }
 
-func (c *Coordinator) run() {
-	c.wg.Add(1)
-	defer c.wg.Done()
-	defer func() {
-		err := c.leaveGroup()
-		if err != nil {
-			c.err = err
-		}
-	}()
+func (c *Coordinator) run(ctx context.Context) error {
 	for {
 		select {
-		case <-c.ctx.Done():
-			return
+		case <-ctx.Done():
+			return nil
 		default:
 		}
 		sgr, err := c.join()
 		if err != nil {
-			c.err = err
-			return
+			return err
 		}
 		myAssignments, err := c.sync(sgr)
 		if err != nil {
-			c.err = err
-			return
+			return err
 		}
-		err = c.set(myAssignments)
+		err = c.set(ctx, myAssignments)
 		if err != nil {
-			c.err = err
-			return
+			return err
 		}
-		err = c.heartbeat()
+		err = c.heartbeat(ctx)
 		if err != nil {
-			c.err = err
-			return
+			return err
 		}
 	}
 }
 
-func (c *Coordinator) set(assignments *sarama.ConsumerGroupMemberAssignment) error {
+func (c *Coordinator) set(ctx context.Context, assignments *sarama.ConsumerGroupMemberAssignment) error {
 	for topic, partitions := range assignments.Topics {
 		// ensure topic entry is created.
 		if _, ok := c.cancels[topic]; !ok {
@@ -288,7 +277,7 @@ func (c *Coordinator) set(assignments *sarama.ConsumerGroupMemberAssignment) err
 				continue
 			}
 			// start handling new topic-partition.
-			ctx, cancel := context.WithCancel(c.ctx)
+			ctx, cancel := context.WithCancel(ctx)
 			c.cancels[topic][partition] = cancel
 			go c.cfg.Consume(ctx, topic, partition)
 		}
