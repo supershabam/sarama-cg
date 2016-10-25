@@ -24,12 +24,16 @@ type ProtocolKey struct {
 // Consume is a function the Coordinator will call when it becomes responsible
 // for a new topic-partition. The provided context will be canceled when the
 // Coordinator is no longer responsible for the topic-partition. This function
-// is expected not to block.
+// is expected not to block. If you encounter an error while reading the topic-
+// partition, you are still seen as responsible for that topic-partition in
+// the kafka consumer group, so you must either recover or stop the Coordinator
+// to remove yourself from the consumer group.
 type Consume func(ctx context.Context, topic string, partition int32)
 
 // Config is used to create a new Coordinator.
 type Config struct {
 	Client         sarama.Client
+	Context        context.Context
 	GroupID        string
 	Protocols      []ProtocolKey
 	SessionTimeout time.Duration
@@ -44,6 +48,7 @@ type Coordinator struct {
 	cancels map[string]map[int32]func()
 	client  sarama.Client
 	cfg     *Config
+	ctx     context.Context
 	gid     int32
 	mid     string
 }
@@ -54,16 +59,20 @@ func NewCoordinator(cfg *Config) *Coordinator {
 		cancels: map[string]map[int32]func(){},
 		client:  cfg.Client,
 		cfg:     cfg,
+		ctx:     cfg.Context,
 	}
 	return c
 }
 
-// Run executes the Coordinator until an error or the provided context
-// is done.
-func (c *Coordinator) Run(outerCtx context.Context) error {
-	ctx, cancel := context.WithCancel(outerCtx)
-	// ensure that ctx is canceled so that it propagates to all the Consume functions we've called.
+// Run executes the Coordinator until an error or the context provided at
+// create time closes.
+func (c *Coordinator) Run() error {
+	ctx, cancel := context.WithCancel(c.ctx)
+	// ensure that ctx is canceled so that it propagates to all the
+	// Consume functions we've called.
 	defer cancel()
+	// we run c.leaveGroup() notwithstanding the result of c.run and
+	// return the first error between them both (if any)
 	runErr := c.run(ctx)
 	leaveErr := c.leaveGroup()
 	if runErr != nil {
