@@ -3,6 +3,7 @@ package cg
 import (
 	"context"
 	"fmt"
+	"sync"
 	"time"
 
 	"github.com/Shopify/sarama"
@@ -11,6 +12,8 @@ import (
 const (
 	consumerProtocolType       = "consumer"
 	consumerGroupMemberVersion = 1
+	offsetCommitRequestVersion = 2
+	offsetFetchRequestVersion  = 1
 )
 
 // ProtocolKey is an implementation of a protocol that will be announced to
@@ -28,7 +31,7 @@ type ProtocolKey struct {
 // partition, you are still seen as responsible for that topic-partition in
 // the kafka consumer group, so you must either recover or stop the Coordinator
 // to remove yourself from the consumer group.
-type Consume func(ctx context.Context, topic string, partition int32)
+type Consume func(ctx context.Context, topic string, partition int32, offset int64)
 
 // Config is used to create a new Coordinator.
 type Config struct {
@@ -36,6 +39,7 @@ type Config struct {
 	Context        context.Context
 	GroupID        string
 	Protocols      []ProtocolKey
+	RetentionTime  time.Duration
 	SessionTimeout time.Duration
 	Heartbeat      time.Duration
 	Topics         []string
@@ -51,6 +55,7 @@ type Coordinator struct {
 	ctx     context.Context
 	gid     int32
 	mid     string
+	m       sync.RWMutex
 }
 
 // NewCoordinator creates a Kafka GroupConsumer.
@@ -80,6 +85,39 @@ func (c *Coordinator) Run() error {
 	}
 	if leaveErr != nil {
 		return leaveErr
+	}
+	return nil
+}
+
+// CommitOffset writes the provided offset for the topic-partition for the consumer group
+// that this coordinator is participating as.
+func (c *Coordinator) CommitOffset(topic string, partition int32, offset int64) error {
+	b, err := c.client.Coordinator(c.cfg.GroupID)
+	if err != nil {
+		return err
+	}
+	// OffsetCommitRequest retention time should be -1 to signify to use the broker default.
+	var rt int64 = -1
+	if c.cfg.RetentionTime.Nanoseconds() != 0 {
+		rt = c.cfg.RetentionTime.Nanoseconds() / int64(time.Millisecond)
+	}
+	req := &sarama.OffsetCommitRequest{
+		ConsumerGroup:           c.cfg.GroupID,
+		ConsumerGroupGeneration: c.gid,
+		ConsumerID:              c.mid,
+		RetentionTime:           rt,
+		Version:                 offsetCommitRequestVersion,
+	}
+	req.AddBlock(topic, partition, offset, 0, "")
+	resp, err := b.CommitOffset(req)
+	if err != nil {
+		return err
+	}
+	// return first error we happen to iterate into (if any).
+	for _, topicErrs := range resp.Errors {
+		for _, partitionErr := range topicErrs {
+			return partitionErr
+		}
 	}
 	return nil
 }
@@ -264,6 +302,24 @@ func (c *Coordinator) run(ctx context.Context) error {
 }
 
 func (c *Coordinator) set(ctx context.Context, assignments *sarama.ConsumerGroupMemberAssignment) error {
+	// get offsets for the assignments we have.
+	b, err := c.client.Coordinator(c.cfg.GroupID)
+	if err != nil {
+		return err
+	}
+	req := &sarama.OffsetFetchRequest{
+		ConsumerGroup: c.cfg.GroupID,
+		Version:       offsetFetchRequestVersion,
+	}
+	for topic, partitions := range assignments.Topics {
+		for _, partition := range partitions {
+			req.AddPartition(topic, partition)
+		}
+	}
+	resp, err := b.FetchOffset(req)
+	if err != nil {
+		return err
+	}
 	for topic, partitions := range assignments.Topics {
 		// ensure topic entry is created.
 		if _, ok := c.cancels[topic]; !ok {
@@ -285,10 +341,20 @@ func (c *Coordinator) set(ctx context.Context, assignments *sarama.ConsumerGroup
 			if _, ok := c.cancels[topic][partition]; ok {
 				continue
 			}
+			block := resp.GetBlock(topic, partition)
+			if block == nil {
+				return fmt.Errorf("expected to have offset block for topic-partition")
+			}
+			if block.Err != sarama.ErrNoError {
+				return block.Err
+			}
+			offset := block.Offset
 			// start handling new topic-partition.
 			ctx, cancel := context.WithCancel(ctx)
 			c.cancels[topic][partition] = cancel
-			go c.cfg.Consume(ctx, topic, partition)
+			// we call the provided Consume function in a goroutine so that the implementor of this function
+			// can't accidentally block the coordinator.
+			go c.cfg.Consume(ctx, topic, partition, offset)
 		}
 	}
 	return nil
