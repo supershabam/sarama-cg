@@ -21,9 +21,33 @@ func main() {
 		panic(err)
 	}
 
+	// set up ctx, and cancel it on interrupt.
+	ctx, cancel := context.WithCancel(context.Background())
+	done := make(chan os.Signal, 1)
+	signal.Notify(done, os.Interrupt, syscall.SIGTERM)
+	go func() {
+		<-done
+		cancel()
+		<-done // if we receive a second signal, let's exit hard.
+		os.Exit(1)
+	}()
+
+	// declare ahead so we can reference in our consume function before
+	// instantiating and starting the coordinator.
+	var coord *cg.Coordinator
+	consume := func(ctx context.Context, topic string, partition int32, offset int64) {
+		fmt.Printf("creating consumer %s-%d@%d\n", topic, partition, offset)
+		// let's pretent like we actually read something...
+		// and commit our new offset.
+		coord.CommitOffset(topic, partition, offset+1)
+		<-ctx.Done()
+		fmt.Printf("closing consumer %s-%d\n", topic, partition)
+	}
+
 	// create coordinator
-	coord := cg.NewCoordinator(&cg.Config{
+	coord = cg.NewCoordinator(&cg.Config{
 		Client:  client,
+		Context: ctx,
 		GroupID: "test",
 		// Protocols are how we agree on how to assign topic-partitions to consumers.
 		// As long as every consumer in the group has at least 1 common protocol (determined by the key),
@@ -40,26 +64,9 @@ func main() {
 		Topics:         []string{"test"},
 		// Consume is called every time we become responsible for a topic-partition.
 		// This let's us implement our own logic of how to consume a partition.
-		Consume: func(ctx context.Context, topic string, partition int32) {
-			fmt.Printf("creating consumer %s-%d\n", topic, partition)
-			go func() {
-				<-ctx.Done()
-				fmt.Printf("closing consumer %s-%d\n", topic, partition)
-			}()
-		},
+		Consume: consume,
 	})
-
-	// set up ctx, and cancel it on interrupt.
-	ctx, cancel := context.WithCancel(context.Background())
-	done := make(chan os.Signal, 1)
-	signal.Notify(done, os.Interrupt, syscall.SIGTERM)
-	go func() {
-		<-done
-		cancel()
-		<-done // if we receive a second signal, let's exit hard.
-		os.Exit(1)
-	}()
-	err = coord.Run(ctx)
+	err = coord.Run()
 	if err != nil {
 		panic(err)
 	}
