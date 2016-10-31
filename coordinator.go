@@ -33,8 +33,8 @@ type ProtocolKey struct {
 // to remove yourself from the consumer group.
 type Consume func(ctx context.Context, topic string, partition int32, offset int64)
 
-// Config is used to create a new Coordinator.
-type Config struct {
+// CoordinatorConfig is used to create a new Coordinator.
+type CoordinatorConfig struct {
 	Client         sarama.Client
 	Context        context.Context
 	GroupID        string
@@ -43,7 +43,6 @@ type Config struct {
 	SessionTimeout time.Duration
 	Heartbeat      time.Duration
 	Topics         []string
-	Consume        Consume
 }
 
 // Coordinator implements a Kafka GroupConsumer with semantics available
@@ -51,7 +50,8 @@ type Config struct {
 type Coordinator struct {
 	cancels map[string]map[int32]func()
 	client  sarama.Client
-	cfg     *Config
+	cfg     *CoordinatorConfig
+	consume Consume
 	ctx     context.Context
 	gid     int32
 	mid     string
@@ -59,7 +59,7 @@ type Coordinator struct {
 }
 
 // NewCoordinator creates a Kafka GroupConsumer.
-func NewCoordinator(cfg *Config) *Coordinator {
+func NewCoordinator(cfg *CoordinatorConfig) *Coordinator {
 	c := &Coordinator{
 		cancels: map[string]map[int32]func(){},
 		client:  cfg.Client,
@@ -71,7 +71,8 @@ func NewCoordinator(cfg *Config) *Coordinator {
 
 // Run executes the Coordinator until an error or the context provided at
 // create time closes.
-func (c *Coordinator) Run() error {
+func (c *Coordinator) Run(consume Consume) error {
+	c.consume = consume
 	ctx, cancel := context.WithCancel(c.ctx)
 	// ensure that ctx is canceled so that it propagates to all the
 	// Consume functions we've called.
@@ -116,6 +117,9 @@ func (c *Coordinator) CommitOffset(topic string, partition int32, offset int64) 
 	// return first error we happen to iterate into (if any).
 	for _, topicErrs := range resp.Errors {
 		for _, partitionErr := range topicErrs {
+			if partitionErr == sarama.ErrNoError {
+				continue
+			}
 			return partitionErr
 		}
 	}
@@ -354,7 +358,7 @@ func (c *Coordinator) set(ctx context.Context, assignments *sarama.ConsumerGroup
 			c.cancels[topic][partition] = cancel
 			// we call the provided Consume function in a goroutine so that the implementor of this function
 			// can't accidentally block the coordinator.
-			go c.cfg.Consume(ctx, topic, partition, offset)
+			go c.consume(ctx, topic, partition, offset)
 		}
 	}
 	return nil
