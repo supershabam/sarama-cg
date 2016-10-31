@@ -56,9 +56,6 @@ func main() {
 	// topic-partition in your consumer group.
 	// TODO be able to return an error from this function to bubble a fatal error into the coordinator.
 	consume := func(ctx context.Context, topic string, partition int32) {
-		if partition != 0 {
-			return
-		}
 		log := logrus.WithFields(logrus.Fields{
 			"topic":     topic,
 			"partition": partition,
