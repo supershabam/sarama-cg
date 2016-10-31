@@ -10,6 +10,7 @@ import (
 // OffsetConsumerConfig is all the instantiated dependencies needed to run an OffsetConsumer.
 type OffsetConsumerConfig struct {
 	Client    sarama.Client
+	Committer *CachingCommitter
 	Context   context.Context
 	Offset    int64
 	Partition int32
@@ -44,10 +45,9 @@ func NewOffsetConsumer(cfg *OffsetConsumerConfig) (*OffsetConsumer, error) {
 	return oc, nil
 }
 
-// Err should be called after the Messages() channel closes to determine if there was an
-// error during processing.
-func (oc *OffsetConsumer) Err() error {
-	return oc.err
+// CommitOffset writes the provided offset to kafka.
+func (oc *OffsetConsumer) CommitOffset(offset int64) error {
+	return oc.cfg.Committer.CommitOffset(offset)
 }
 
 // Consume returns a channel of Kafka messages on this topic-partition starting
@@ -55,6 +55,12 @@ func (oc *OffsetConsumer) Err() error {
 // the context provided at creation time closes.
 func (oc *OffsetConsumer) Consume() <-chan *sarama.ConsumerMessage {
 	return oc.ch
+}
+
+// Err should be called after the Messages() channel closes to determine if there was an
+// error during processing.
+func (oc *OffsetConsumer) Err() error {
+	return oc.err
 }
 
 func (oc *OffsetConsumer) run() error {
