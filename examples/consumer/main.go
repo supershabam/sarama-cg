@@ -2,13 +2,13 @@ package main
 
 import (
 	"context"
-	"fmt"
 	"os"
 	"os/signal"
 	"syscall"
 	"time"
 
 	"github.com/Shopify/sarama"
+	"github.com/Sirupsen/logrus"
 	cg "github.com/supershabam/sarama-cg"
 )
 
@@ -32,27 +32,15 @@ func main() {
 		os.Exit(1)
 	}()
 
-	// declare ahead so we can reference in our consume function before
-	// instantiating and starting the coordinator.
-	var coord *cg.Coordinator
-	consume := func(ctx context.Context, topic string, partition int32, offset int64) {
-		fmt.Printf("creating consumer %s-%d@%d\n", topic, partition, offset)
-		// let's pretent like we actually read something...
-		// and commit our new offset.
-		coord.CommitOffset(topic, partition, offset+1)
-		<-ctx.Done()
-		fmt.Printf("closing consumer %s-%d\n", topic, partition)
-	}
-
-	// create coordinator
-	coord = cg.NewCoordinator(&cg.Config{
+	// create coordinator.
+	coord := cg.NewCoordinator(&cg.CoordinatorConfig{
 		Client:  client,
 		Context: ctx,
 		GroupID: "test",
 		// Protocols are how we agree on how to assign topic-partitions to consumers.
 		// As long as every consumer in the group has at least 1 common protocol (determined by the key),
 		// then the group will function.
-		// A protocol is an interface, so I can implement my own.
+		// A protocol is an interface, so you can implement your own.
 		Protocols: []cg.ProtocolKey{
 			{
 				Protocol: &cg.HashRing{},
@@ -62,11 +50,57 @@ func main() {
 		SessionTimeout: 30 * time.Second,
 		Heartbeat:      3 * time.Second,
 		Topics:         []string{"test"},
-		// Consume is called every time we become responsible for a topic-partition.
-		// This let's us implement our own logic of how to consume a partition.
-		Consume: consume,
 	})
-	err = coord.Run()
+	// consume is called when we become responsible for a topic-partition. Ctx cancels when we are
+	// no longer responsible for the topic-partition. Offset is the last committed offset for the
+	// topic-partition in your consumer group.
+	// TODO be able to return an error from this function to bubble a fatal error into the coordinator.
+	consume := func(ctx context.Context, topic string, partition int32, offset int64) {
+		log := logrus.WithFields(logrus.Fields{
+			"topic":     topic,
+			"partition": partition,
+		})
+		if offset < 0 {
+			log.Info("resolving pseudo-offset to real offset")
+			resolvedOffset, err := client.GetOffset(topic, partition, offset)
+			if err != nil {
+				log.WithError(err).Error("could not resolve offset")
+				return
+			}
+			offset = resolvedOffset
+		}
+		log.WithField("offset", offset).Info("creating consumer")
+		oc, err := cg.NewOffsetConsumer(&cg.OffsetConsumerConfig{
+			Client:    client,
+			Context:   ctx,
+			Offset:    offset,
+			Partition: partition,
+			Topic:     topic,
+		})
+		if err != nil {
+			log.WithError(err).Error("could not create consumer")
+			return
+		}
+		for {
+			select {
+			case <-ctx.Done():
+				log.Info("our parent context canceled")
+				return
+			case msg, ok := <-oc.Consume():
+				if !ok {
+					log.Info("consumer channel closed")
+					return
+				}
+				err := coord.CommitOffset(topic, partition, msg.Offset)
+				if err != nil {
+					log.WithField("offset", msg.Offset).WithError(err).Error("could not commit offset")
+					return
+				}
+				log.WithField("offset", msg.Offset).Info("committed offset")
+			}
+		}
+	}
+	err = coord.Run(consume)
 	if err != nil {
 		panic(err)
 	}
