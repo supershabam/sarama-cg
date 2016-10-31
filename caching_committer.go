@@ -9,7 +9,6 @@ import (
 type CachingCommitterConfig struct {
 	Coordinator *Coordinator
 	Duration    time.Duration
-	Offset      int64
 	Partition   int32
 	Topic       string
 }
@@ -27,9 +26,13 @@ type CachingCommitter struct {
 // wrapping the Coordinator.CommitOffset function with a cache so we don't hit
 // the database too frequently.
 func NewCachingCommitter(cfg *CachingCommitterConfig) (*CachingCommitter, error) {
+	highest, err := cfg.Coordinator.GetOffset(cfg.Topic, cfg.Partition)
+	if err != nil {
+		return nil, err
+	}
 	return &CachingCommitter{
 		cfg:     cfg,
-		highest: cfg.Offset,
+		highest: highest,
 	}, nil
 }
 

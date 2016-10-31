@@ -2,6 +2,7 @@ package cg
 
 import (
 	"context"
+	"time"
 
 	"github.com/Shopify/sarama"
 )
@@ -14,12 +15,13 @@ type Seek func(topic string, partition int32) (int64, error)
 
 // SeekConsumerConfig is needed to create a new SeekConsumer.
 type SeekConsumerConfig struct {
-	Client    sarama.Client
-	Committer *CachingCommitter
-	Context   context.Context
-	Partition int32
-	Seek      Seek
-	Topic     string
+	CacheDuration time.Duration
+	Client        sarama.Client
+	Context       context.Context
+	Coordinator   *Coordinator
+	Partition     int32
+	Seek          Seek
+	Topic         string
 }
 
 // Ensure that we're implementing the Consumer interface.
@@ -39,12 +41,13 @@ func NewSeekConsumer(cfg *SeekConsumerConfig) (*SeekConsumer, error) {
 		return nil, err
 	}
 	oc, err := NewOffsetConsumer(&OffsetConsumerConfig{
-		Client:    cfg.Client,
-		Committer: cfg.Committer,
-		Context:   cfg.Context,
-		Offset:    offset,
-		Partition: cfg.Partition,
-		Topic:     cfg.Topic,
+		CacheDuration: cfg.CacheDuration,
+		Client:        cfg.Client,
+		Context:       cfg.Context,
+		Coordinator:   cfg.Coordinator,
+		Offset:        offset,
+		Partition:     cfg.Partition,
+		Topic:         cfg.Topic,
 	})
 	if err != nil {
 		return nil, err

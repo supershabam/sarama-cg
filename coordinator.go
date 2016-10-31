@@ -126,6 +126,32 @@ func (c *Coordinator) CommitOffset(topic string, partition int32, offset int64) 
 	return nil
 }
 
+// GetOffset returns the current committed offset for the topic-partition for the
+// group id provided to the coordinator.
+func (c *Coordinator) GetOffset(topic string, partition int32) (int64, error) {
+	b, err := c.client.Coordinator(c.cfg.GroupID)
+	if err != nil {
+		return 0, err
+	}
+	req := &sarama.OffsetFetchRequest{
+		ConsumerGroup: c.cfg.GroupID,
+		Version:       offsetFetchRequestVersion,
+	}
+	req.AddPartition(topic, partition)
+	resp, err := b.FetchOffset(req)
+	if err != nil {
+		return 0, err
+	}
+	block := resp.GetBlock(topic, partition)
+	if block == nil {
+		return 0, fmt.Errorf("nil block returned from fetch offset")
+	}
+	if block.Err != sarama.ErrNoError {
+		return 0, block.Err
+	}
+	return block.Offset, nil
+}
+
 // groupAssignments is only called by the leader and is responsible for assigning
 // topic-partitions to the members in the group via a protocol common to the group.
 func (c *Coordinator) groupAssignments(resp *sarama.JoinGroupResponse) (map[string]*sarama.ConsumerGroupMemberAssignment, error) {

@@ -1,5 +1,6 @@
 package: github.com/supershabam/sarama-cg
 import:
 - package: github.com/Shopify/sarama
-  version: v1.10.1
+  repo: https://github.com/supershabam/sarama
+  version: f672ba54efeac37acc7a48c3c0cc732e402fcf34
 - package: github.com/serialx/hashring
