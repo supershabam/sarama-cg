@@ -15,7 +15,7 @@ import (
 func main() {
 	// create sarama client which is needed by sarama-cg
 	cfg := sarama.NewConfig()
-	cfg.Version = sarama.V0_9_0_0
+	cfg.Version = sarama.V0_10_0_0
 	client, err := sarama.NewClient([]string{"localhost:9092"}, cfg)
 	if err != nil {
 		panic(err)
@@ -55,27 +55,23 @@ func main() {
 	// no longer responsible for the topic-partition. Offset is the last committed offset for the
 	// topic-partition in your consumer group.
 	// TODO be able to return an error from this function to bubble a fatal error into the coordinator.
-	consume := func(ctx context.Context, topic string, partition int32, offset int64) {
+	consume := func(ctx context.Context, topic string, partition int32) {
+		if partition != 0 {
+			return
+		}
 		log := logrus.WithFields(logrus.Fields{
 			"topic":     topic,
 			"partition": partition,
 		})
-		if offset < 0 {
-			log.Info("resolving pseudo-offset to real offset")
-			resolvedOffset, err := client.GetOffset(topic, partition, offset)
-			if err != nil {
-				log.WithError(err).Error("could not resolve offset")
-				return
-			}
-			offset = resolvedOffset
-		}
-		log.WithField("offset", offset).Info("creating consumer")
-		oc, err := cg.NewOffsetConsumer(&cg.OffsetConsumerConfig{
-			Client:    client,
-			Context:   ctx,
-			Offset:    offset,
-			Partition: partition,
-			Topic:     topic,
+		log.Info("creating consumer")
+		sc, err := cg.NewTimeWindowConsumer(&cg.TimeWindowConsumerConfig{
+			CacheDuration: time.Second * 10,
+			Client:        client,
+			Context:       ctx,
+			Coordinator:   coord,
+			Partition:     partition,
+			Topic:         topic,
+			Window:        time.Minute * 5,
 		})
 		if err != nil {
 			log.WithError(err).Error("could not create consumer")
@@ -86,19 +82,27 @@ func main() {
 			case <-ctx.Done():
 				log.Info("our parent context canceled")
 				return
-			case msg, ok := <-oc.Consume():
+			case msg, ok := <-sc.Consume():
 				if !ok {
 					log.Info("consumer channel closed")
+					err = sc.Err()
+					if err != nil {
+						log.WithError(err).Error("ending consume because of error")
+					}
 					return
 				}
-				err := coord.CommitOffset(topic, partition, msg.Offset)
+				log.WithFields(logrus.Fields{
+					"offset": msg.Offset,
+					"at":     msg.Timestamp,
+				}).Info("read message")
+				err := sc.CommitOffset(msg.Offset)
 				if err != nil {
 					log.WithField("offset", msg.Offset).WithError(err).Error("could not commit offset")
 					return
 				}
-				log.WithField("offset", msg.Offset).Info("committed offset")
 			}
 		}
+
 	}
 	err = coord.Run(consume)
 	if err != nil {
