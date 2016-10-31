@@ -31,7 +31,7 @@ type ProtocolKey struct {
 // partition, you are still seen as responsible for that topic-partition in
 // the kafka consumer group, so you must either recover or stop the Coordinator
 // to remove yourself from the consumer group.
-type Consume func(ctx context.Context, topic string, partition int32, offset int64)
+type Consume func(ctx context.Context, topic string, partition int32)
 
 // CoordinatorConfig is used to create a new Coordinator.
 type CoordinatorConfig struct {
@@ -306,24 +306,6 @@ func (c *Coordinator) run(ctx context.Context) error {
 }
 
 func (c *Coordinator) set(ctx context.Context, assignments *sarama.ConsumerGroupMemberAssignment) error {
-	// get offsets for the assignments we have.
-	b, err := c.client.Coordinator(c.cfg.GroupID)
-	if err != nil {
-		return err
-	}
-	req := &sarama.OffsetFetchRequest{
-		ConsumerGroup: c.cfg.GroupID,
-		Version:       offsetFetchRequestVersion,
-	}
-	for topic, partitions := range assignments.Topics {
-		for _, partition := range partitions {
-			req.AddPartition(topic, partition)
-		}
-	}
-	resp, err := b.FetchOffset(req)
-	if err != nil {
-		return err
-	}
 	for topic, partitions := range assignments.Topics {
 		// ensure topic entry is created.
 		if _, ok := c.cancels[topic]; !ok {
@@ -345,20 +327,12 @@ func (c *Coordinator) set(ctx context.Context, assignments *sarama.ConsumerGroup
 			if _, ok := c.cancels[topic][partition]; ok {
 				continue
 			}
-			block := resp.GetBlock(topic, partition)
-			if block == nil {
-				return fmt.Errorf("expected to have offset block for topic-partition")
-			}
-			if block.Err != sarama.ErrNoError {
-				return block.Err
-			}
-			offset := block.Offset
 			// start handling new topic-partition.
 			ctx, cancel := context.WithCancel(ctx)
 			c.cancels[topic][partition] = cancel
 			// we call the provided Consume function in a goroutine so that the implementor of this function
 			// can't accidentally block the coordinator.
-			go c.consume(ctx, topic, partition, offset)
+			go c.consume(ctx, topic, partition)
 		}
 	}
 	return nil
