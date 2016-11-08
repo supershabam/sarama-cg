@@ -7,6 +7,8 @@ import (
 	"time"
 
 	"github.com/Shopify/sarama"
+	"github.com/Sirupsen/logrus"
+	"github.com/davecgh/go-spew/spew"
 )
 
 const (
@@ -155,17 +157,24 @@ func (c *Coordinator) GetOffset(topic string, partition int32) (int64, error) {
 // groupAssignments is only called by the leader and is responsible for assigning
 // topic-partitions to the members in the group via a protocol common to the group.
 func (c *Coordinator) groupAssignments(resp *sarama.JoinGroupResponse) (map[string]*sarama.ConsumerGroupMemberAssignment, error) {
+	logrus.Info("groupAssignments - JoinGroupResponse")
+	spew.Dump(resp)
 	// build Candidates.
 	members, err := resp.GetMembers()
 	if err != nil {
 		return map[string]*sarama.ConsumerGroupMemberAssignment{}, err
 	}
 	cand := Candidates{
-		MemberIDs:       make([]string, 0, len(members)),
+		Members:         make([]Member, len(members)),
 		TopicPartitions: make(map[string][]int32),
 	}
 	for memberID, meta := range members {
-		cand.MemberIDs = append(cand.MemberIDs, memberID)
+		member := Member{
+			MemberID: memberID,
+			UserData: meta.UserData,
+		}
+		// TODO maybe this Cand.Members would be best as a map[MemberID]MemberData
+		cand.Members = append(cand.Members, member)
 		for _, topic := range meta.Topics {
 			partitions, err := c.client.Partitions(topic)
 			if err != nil {
@@ -223,6 +232,10 @@ func (c *Coordinator) heartbeat(ctx context.Context) error {
 	}
 }
 
+// leaveGroup announces to Kafka that our MemberID is no longer participating in the
+// configured GroupID. This allows Kafka to quickly re-assign the topic-partitions that
+// our MemberID owns instead of forcing Kafka to wait for our now-unheartbeated timeout
+// to expire.
 func (c *Coordinator) leaveGroup() error {
 	// if we were never part of a group.
 	if c.mid == "" {
@@ -245,6 +258,12 @@ func (c *Coordinator) leaveGroup() error {
 	return nil
 }
 
+// join tells Kafka that our MemberID would like to join the configured
+// GroupID. A member will be assigned to be the leader for the group, and
+// it could be us. We return a SyncGroupRequest which each member uses
+// to determine ask Kafka what topic-partitions the member is responsible for.
+// If we are the leader, we need to make the topic-parition assignments and
+// tell Kafka.
 func (c *Coordinator) join() (*sarama.SyncGroupRequest, error) {
 	jgr, err := c.joinGroupRequest()
 	if err != nil {
@@ -292,12 +311,12 @@ func (c *Coordinator) joinGroupRequest() (*sarama.JoinGroupRequest, error) {
 		MemberId:     c.mid,
 		ProtocolType: consumerProtocolType,
 	}
-	meta := &sarama.ConsumerGroupMemberMetadata{
-		Version: consumerGroupMemberVersion,
-		Topics:  c.cfg.Topics,
-	}
 	for _, p := range c.cfg.Protocols {
-		err := req.AddGroupProtocolMetadata(p.Key, meta)
+		err := req.AddGroupProtocolMetadata(p.Key, &sarama.ConsumerGroupMemberMetadata{
+			Version:  consumerGroupMemberVersion,
+			Topics:   c.cfg.Topics,
+			UserData: p.Protocol.UserData(),
+		})
 		if err != nil {
 			return nil, err
 		}
@@ -331,6 +350,8 @@ func (c *Coordinator) run(ctx context.Context) error {
 	}
 }
 
+// set is a local function to take the current state of assignments that kafka says our
+// MemberID is responsible for, and reconcile that with our previous state of assignments.
 func (c *Coordinator) set(ctx context.Context, assignments *sarama.ConsumerGroupMemberAssignment) error {
 	for topic, partitions := range assignments.Topics {
 		// ensure topic entry is created.
