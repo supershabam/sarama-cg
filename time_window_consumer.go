@@ -8,12 +8,25 @@ import (
 	"github.com/Shopify/sarama"
 )
 
+// StartPosition is where the TimeWindowConsumer should start at to seek back
+// the Window duration.
+type StartPosition int
+
+const (
+	// OffsetGroup starts at the committed offset, if no offset is commited or the offset is out of range
+	// of what is readable, the consumer will error upon reading.
+	OffsetGroup StartPosition = iota
+	// OffsetNewest starts at the newest message in Kafka and then seeks back Window amount.
+	OffsetNewest
+)
+
 // TimeWindowConsumerConfig is used to create a new TimeWindowConsumer.
 type TimeWindowConsumerConfig struct {
 	CacheDuration time.Duration
 	Client        sarama.Client
 	Context       context.Context
 	Coordinator   *Coordinator
+	Start         StartPosition
 	Partition     int32
 	Topic         string
 	Window        time.Duration
@@ -29,6 +42,7 @@ type TimeWindowConsumer struct {
 	client sarama.Client
 	coord  *Coordinator
 	sc     *SeekConsumer
+	start  StartPosition
 	window time.Duration
 }
 
@@ -37,6 +51,7 @@ func NewTimeWindowConsumer(cfg *TimeWindowConsumerConfig) (*TimeWindowConsumer, 
 	twc := &TimeWindowConsumer{
 		client: cfg.Client,
 		coord:  cfg.Coordinator,
+		start:  cfg.Start,
 		window: cfg.Window,
 	}
 	sc, err := NewSeekConsumer(&SeekConsumerConfig{
@@ -74,9 +89,18 @@ func (twc *TimeWindowConsumer) Err() error {
 }
 
 func (twc *TimeWindowConsumer) seek(topic string, partition int32) (int64, error) {
-	offset, err := twc.coord.GetOffset(topic, partition)
-	if err != nil {
-		return 0, err
+	var offset int64
+	switch twc.start {
+	case OffsetGroup:
+		o, err := twc.coord.GetOffset(topic, partition)
+		if err != nil {
+			return 0, err
+		}
+		offset = o
+	case OffsetNewest:
+		offset = sarama.OffsetNewest
+	default:
+		panic("unknown start type provided")
 	}
 	t, err := twc.timeAt(topic, partition, offset)
 	if err != nil {
