@@ -7,8 +7,6 @@ import (
 	"time"
 
 	"github.com/Shopify/sarama"
-	"github.com/Sirupsen/logrus"
-	"github.com/davecgh/go-spew/spew"
 )
 
 const (
@@ -157,8 +155,6 @@ func (c *Coordinator) GetOffset(topic string, partition int32) (int64, error) {
 // groupAssignments is only called by the leader and is responsible for assigning
 // topic-partitions to the members in the group via a protocol common to the group.
 func (c *Coordinator) groupAssignments(resp *sarama.JoinGroupResponse) (map[string]*sarama.ConsumerGroupMemberAssignment, error) {
-	logrus.Info("groupAssignments - JoinGroupResponse")
-	spew.Dump(resp)
 	// build Candidates.
 	members, err := resp.GetMembers()
 	if err != nil {
