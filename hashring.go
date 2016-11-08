@@ -9,6 +9,7 @@ import (
 // HashRing is a type of Protocol that attemps to handle additions/removals of
 // nodes and partitions with the least number of changes to a previous configurations.
 type HashRing struct {
+	MyUserData []byte
 }
 
 // Int32Slice is just so we can sort int32s.
@@ -20,8 +21,12 @@ func (s Int32Slice) Less(i, j int) bool { return s[i] < s[j] }
 
 // Assign distributes TopicPartitions among MemberIDs
 func (hr *HashRing) Assign(cand Candidates) Assignment {
-	a := make(map[string]topicPartitions, len(cand.MemberIDs))
-	ring := hashring.New(cand.MemberIDs)
+	a := make(map[string]TopicPartitions, len(cand.Members))
+	ids := make([]string, 0, len(cand.Members))
+	for _, member := range cand.Members {
+		ids = append(ids, member.MemberID)
+	}
+	ring := hashring.New(ids)
 	for topic, partitions := range cand.TopicPartitions {
 		for _, partition := range partitions {
 			key := fmt.Sprintf("%s:%d", topic, partition)
@@ -36,4 +41,10 @@ func (hr *HashRing) Assign(cand Candidates) Assignment {
 		}
 	}
 	return a
+}
+
+// UserData is written to Kafka upon joining the group and can be accessed within
+// the Assign funcion utilizing the UserData from all other members.
+func (hr *HashRing) UserData() []byte {
+	return hr.MyUserData
 }
