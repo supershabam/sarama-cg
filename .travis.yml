@@ -1,0 +1,8 @@
+---
+sudo: required
+
+services:
+  - docker
+
+before_install:
+  - docker pull ches/kafka:0.10.1.0  
