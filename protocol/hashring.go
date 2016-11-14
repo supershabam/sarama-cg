@@ -1,7 +1,9 @@
-package cg
+package protocol
 
 import (
 	"fmt"
+
+	"github.com/supershabam/sarama-cg"
 
 	"github.com/serialx/hashring"
 )
@@ -20,8 +22,8 @@ func (s Int32Slice) Swap(i, j int)      { s[i], s[j] = s[j], s[i] }
 func (s Int32Slice) Less(i, j int) bool { return s[i] < s[j] }
 
 // Assign distributes TopicPartitions among MemberIDs
-func (hr *HashRing) Assign(cand Candidates) Assignment {
-	a := make(map[string]TopicPartitions, len(cand.Members))
+func (hr *HashRing) Assign(cand cg.Candidates) cg.Assignment {
+	a := make(map[string]cg.TopicPartitions, len(cand.Members))
 	ids := make([]string, 0, len(cand.Members))
 	for _, member := range cand.Members {
 		ids = append(ids, member.MemberID)
