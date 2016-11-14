@@ -14,12 +14,12 @@ type HashRing struct {
 	MyUserData []byte
 }
 
-// Int32Slice is just so we can sort int32s.
-type Int32Slice []int32
+// int32Slice is just so we can sort int32s.
+type int32Slice []int32
 
-func (s Int32Slice) Len() int           { return len(s) }
-func (s Int32Slice) Swap(i, j int)      { s[i], s[j] = s[j], s[i] }
-func (s Int32Slice) Less(i, j int) bool { return s[i] < s[j] }
+func (s int32Slice) Len() int           { return len(s) }
+func (s int32Slice) Swap(i, j int)      { s[i], s[j] = s[j], s[i] }
+func (s int32Slice) Less(i, j int) bool { return s[i] < s[j] }
 
 // Assign distributes TopicPartitions among MemberIDs
 func (hr *HashRing) Assign(cand cg.Candidates) cg.Assignment {
