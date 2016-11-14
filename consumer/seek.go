@@ -1,46 +1,48 @@
-package cg
+package consumer
 
 import (
 	"context"
 	"time"
 
 	"github.com/Shopify/sarama"
+
+	"github.com/supershabam/sarama-cg"
 )
 
-// Seek returns an offset for the SeekConsumer to begin reading from. Seek is provided
+// SeekFn returns an offset for the Seek to begin reading from. Seek is provided
 // a topic, partition. This can be
 // used for an application that needs a history of messages for context before
 // the application can begin reading at the last committed offset.
-type Seek func(topic string, partition int32) (int64, error)
+type SeekFn func(topic string, partition int32) (int64, error)
 
-// SeekConsumerConfig is needed to create a new SeekConsumer.
-type SeekConsumerConfig struct {
+// SeekConfig is needed to create a new Seek.
+type SeekConfig struct {
 	CacheDuration time.Duration
 	Client        sarama.Client
 	Context       context.Context
-	Coordinator   *Coordinator
+	Coordinator   *cg.Coordinator
 	Partition     int32
-	Seek          Seek
+	SeekFn        SeekFn
 	Topic         string
 }
 
 // Ensure that we're implementing the Consumer interface.
-var _ Consumer = &SeekConsumer{}
+var _ cg.Consumer = &Seek{}
 
-// SeekConsumer consumes given topic-partition starting at an offset determined
+// Seek consumes given topic-partition starting at an offset determined
 // by the provided Seek function.
-type SeekConsumer struct {
-	oc *OffsetConsumer
+type Seek struct {
+	oc *Offset
 }
 
-// NewSeekConsumer creates a new SeekConsumer that immediately starts consuming and whose
+// NewSeek creates a new Seek that immediately starts consuming and whose
 // messages are available on the Messages() channel.
-func NewSeekConsumer(cfg *SeekConsumerConfig) (*SeekConsumer, error) {
-	offset, err := cfg.Seek(cfg.Topic, cfg.Partition)
+func NewSeek(cfg *SeekConfig) (*Seek, error) {
+	offset, err := cfg.SeekFn(cfg.Topic, cfg.Partition)
 	if err != nil {
 		return nil, err
 	}
-	oc, err := NewOffsetConsumer(&OffsetConsumerConfig{
+	oc, err := NewOffset(&OffsetConfig{
 		CacheDuration: cfg.CacheDuration,
 		Client:        cfg.Client,
 		Context:       cfg.Context,
@@ -52,25 +54,25 @@ func NewSeekConsumer(cfg *SeekConsumerConfig) (*SeekConsumer, error) {
 	if err != nil {
 		return nil, err
 	}
-	return &SeekConsumer{
+	return &Seek{
 		oc: oc,
 	}, nil
 }
 
 // CommitOffset writes the provided offset to kafka.
-func (sk *SeekConsumer) CommitOffset(offset int64) error {
+func (sk *Seek) CommitOffset(offset int64) error {
 	return sk.oc.CommitOffset(offset)
 }
 
 // Consume returns a channel of Kafka messages on this topic-partition starting
 // at the provided offset. This channel will close when there is a non-recoverable error, or
 // the context provided at creation time closes.
-func (sk *SeekConsumer) Consume() <-chan *sarama.ConsumerMessage {
+func (sk *Seek) Consume() <-chan *sarama.ConsumerMessage {
 	return sk.oc.Consume()
 }
 
 // Err should be called after the Messages() channel closes to determine if there was an
 // error during processing.
-func (sk *SeekConsumer) Err() error {
+func (sk *Seek) Err() error {
 	return sk.oc.Err()
 }
