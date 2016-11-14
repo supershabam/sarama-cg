@@ -10,6 +10,7 @@ import (
 	"github.com/Shopify/sarama"
 	"github.com/Sirupsen/logrus"
 	cg "github.com/supershabam/sarama-cg"
+	"github.com/supershabam/sarama-cg/consumer"
 )
 
 func main() {
@@ -61,7 +62,7 @@ func main() {
 			"partition": partition,
 		})
 		log.Info("creating consumer")
-		sc, err := cg.NewTimeWindowConsumer(&cg.TimeWindowConsumerConfig{
+		sc, err := consumer.NewTimeWindow(&consumer.TimeWindowConfig{
 			CacheDuration: time.Second * 10,
 			Client:        client,
 			Context:       ctx,

@@ -1,4 +1,4 @@
-package cg
+package consumer
 
 import (
 	"context"
@@ -6,9 +6,10 @@ import (
 	"time"
 
 	"github.com/Shopify/sarama"
+	"github.com/supershabam/sarama-cg"
 )
 
-// StartPosition is where the TimeWindowConsumer should start at to seek back
+// StartPosition is where the TimeWindow should start at to seek back
 // the Window duration.
 type StartPosition int
 
@@ -20,47 +21,47 @@ const (
 	OffsetNewest
 )
 
-// TimeWindowConsumerConfig is used to create a new TimeWindowConsumer.
-type TimeWindowConsumerConfig struct {
+// TimeWindowConfig is used to create a new TimeWindow.
+type TimeWindowConfig struct {
 	CacheDuration time.Duration
 	Client        sarama.Client
 	Context       context.Context
-	Coordinator   *Coordinator
+	Coordinator   *cg.Coordinator
 	Start         StartPosition
 	Partition     int32
 	Topic         string
 	Window        time.Duration
 }
 
-// Ensures that TimeWindowConsumer fulfils Consumer interface.
-var _ Consumer = &TimeWindowConsumer{}
+// Ensures that TimeWindow fulfils Consumer interface.
+var _ cg.Consumer = &TimeWindow{}
 
-// TimeWindowConsumer is a consumer that finds the current offset in the group
+// TimeWindow is a consumer that finds the current offset in the group
 // for the given partition-topic, discovers what time that message happened, and
 // then rewinds to past offsets until the provided Window of time is acheived.
-type TimeWindowConsumer struct {
+type TimeWindow struct {
 	client sarama.Client
-	coord  *Coordinator
-	sc     *SeekConsumer
+	coord  *cg.Coordinator
+	sc     *Seek
 	start  StartPosition
 	window time.Duration
 }
 
-// NewTimeWindowConsumer creates a new consumer that is ready to begin reading.
-func NewTimeWindowConsumer(cfg *TimeWindowConsumerConfig) (*TimeWindowConsumer, error) {
-	twc := &TimeWindowConsumer{
+// NewTimeWindow creates a new consumer that is ready to begin reading.
+func NewTimeWindow(cfg *TimeWindowConfig) (*TimeWindow, error) {
+	twc := &TimeWindow{
 		client: cfg.Client,
 		coord:  cfg.Coordinator,
 		start:  cfg.Start,
 		window: cfg.Window,
 	}
-	sc, err := NewSeekConsumer(&SeekConsumerConfig{
+	sc, err := NewSeek(&SeekConfig{
 		CacheDuration: cfg.CacheDuration,
 		Client:        cfg.Client,
 		Context:       cfg.Context,
 		Coordinator:   cfg.Coordinator,
 		Partition:     cfg.Partition,
-		Seek:          twc.seek,
+		SeekFn:        twc.seek,
 		Topic:         cfg.Topic,
 	})
 	if err != nil {
@@ -71,24 +72,24 @@ func NewTimeWindowConsumer(cfg *TimeWindowConsumerConfig) (*TimeWindowConsumer, 
 }
 
 // CommitOffset writes the provided offset to kafka.
-func (twc *TimeWindowConsumer) CommitOffset(offset int64) error {
+func (twc *TimeWindow) CommitOffset(offset int64) error {
 	return twc.sc.CommitOffset(offset)
 }
 
 // Consume returns a channel of Kafka messages on this topic-partition starting
 // at the provided offset. This channel will close when there is a non-recoverable error, or
 // the context provided at creation time closes.
-func (twc *TimeWindowConsumer) Consume() <-chan *sarama.ConsumerMessage {
+func (twc *TimeWindow) Consume() <-chan *sarama.ConsumerMessage {
 	return twc.sc.Consume()
 }
 
 // Err should be called after the Messages() channel closes to determine if there was an
 // error during processing.
-func (twc *TimeWindowConsumer) Err() error {
+func (twc *TimeWindow) Err() error {
 	return twc.sc.Err()
 }
 
-func (twc *TimeWindowConsumer) seek(topic string, partition int32) (int64, error) {
+func (twc *TimeWindow) seek(topic string, partition int32) (int64, error) {
 	var offset int64
 	switch twc.start {
 	case OffsetGroup:
@@ -110,7 +111,7 @@ func (twc *TimeWindowConsumer) seek(topic string, partition int32) (int64, error
 	return twc.binarySearch(topic, partition, target)
 }
 
-func (twc *TimeWindowConsumer) binarySearch(topic string, partition int32, target time.Time) (int64, error) {
+func (twc *TimeWindow) binarySearch(topic string, partition int32, target time.Time) (int64, error) {
 	lower, upper, err := twc.bounds(topic, partition)
 	if err != nil {
 		return 0, err
@@ -137,7 +138,7 @@ func (twc *TimeWindowConsumer) binarySearch(topic string, partition int32, targe
 	return offset, nil
 }
 
-func (twc *TimeWindowConsumer) bounds(topic string, partition int32) (lower, upper int64, err error) {
+func (twc *TimeWindow) bounds(topic string, partition int32) (lower, upper int64, err error) {
 	lower, err = twc.client.GetOffset(topic, partition, sarama.OffsetOldest)
 	if err != nil {
 		return
@@ -146,7 +147,7 @@ func (twc *TimeWindowConsumer) bounds(topic string, partition int32) (lower, upp
 	return
 }
 
-func (twc *TimeWindowConsumer) timeAt(topic string, partition int32, offset int64) (time.Time, error) {
+func (twc *TimeWindow) timeAt(topic string, partition int32, offset int64) (time.Time, error) {
 	c, err := sarama.NewConsumerFromClient(twc.client)
 	if err != nil {
 		return time.Time{}, err
