@@ -161,7 +161,7 @@ func (c *Coordinator) groupAssignments(resp *sarama.JoinGroupResponse) (map[stri
 		return map[string]*sarama.ConsumerGroupMemberAssignment{}, err
 	}
 	cand := Candidates{
-		Members:         make([]Member, len(members)),
+		Members:         make([]Member, 0, len(members)),
 		TopicPartitions: make(map[string][]int32),
 	}
 	for memberID, meta := range members {
