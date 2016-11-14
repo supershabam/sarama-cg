@@ -11,6 +11,7 @@ import (
 	"github.com/Sirupsen/logrus"
 	cg "github.com/supershabam/sarama-cg"
 	"github.com/supershabam/sarama-cg/consumer"
+	"github.com/supershabam/sarama-cg/protocol"
 )
 
 func main() {
@@ -44,7 +45,7 @@ func main() {
 		// A protocol is an interface, so you can implement your own.
 		Protocols: []cg.ProtocolKey{
 			{
-				Protocol: &cg.HashRing{},
+				Protocol: &protocol.HashRing{},
 				Key:      "hashring",
 			},
 		},
