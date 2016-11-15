@@ -8,4 +8,5 @@ type Consumer interface {
 	CommitOffset(offset int64) error
 	Consume() <-chan *sarama.ConsumerMessage
 	Err() error
+	HighWaterMarkOffset() int64
 }
