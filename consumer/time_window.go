@@ -89,6 +89,12 @@ func (twc *TimeWindow) Err() error {
 	return twc.sc.Err()
 }
 
+// HighWaterMarkOffset returns the last reported highwatermark offset for the partition this
+// consumer is reading.
+func (twc *TimeWindow) HighWaterMarkOffset() int64 {
+	return twc.sc.HighWaterMarkOffset()
+}
+
 func (twc *TimeWindow) seek(topic string, partition int32) (int64, error) {
 	var offset int64
 	switch twc.start {

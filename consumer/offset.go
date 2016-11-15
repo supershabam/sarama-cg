@@ -27,6 +27,7 @@ type Offset struct {
 	ch        chan *sarama.ConsumerMessage
 	committer *cg.CachingCommitter
 	err       error
+	pc        sarama.PartitionConsumer
 }
 
 // NewOffset creates a new Offset that immediately starts consuming and whose
@@ -44,17 +45,28 @@ func NewOffset(cfg *OffsetConfig) (*Offset, error) {
 	if err != nil {
 		return nil, err
 	}
+	c, err := sarama.NewConsumerFromClient(cfg.Client)
+	if err != nil {
+		return nil, err
+	}
+	pc, err := c.ConsumePartition(cfg.Topic, cfg.Partition, cfg.Offset)
+	if err != nil {
+		return nil, err
+	}
 	oc := &Offset{
 		cfg:       cfg,
 		ch:        make(chan *sarama.ConsumerMessage),
 		committer: committer,
+		pc:        pc,
 	}
 	go func() {
+		defer c.Close()
+		defer pc.Close()
+		defer close(oc.ch)
 		err := oc.run()
 		if err != nil {
 			oc.err = err
 		}
-		close(oc.ch)
 	}()
 	return oc, nil
 }
@@ -77,18 +89,14 @@ func (oc *Offset) Err() error {
 	return oc.err
 }
 
+// HighWaterMarkOffset returns the last reported highwatermark offset for the partition this
+// consumer is reading.
+func (oc *Offset) HighWaterMarkOffset() int64 {
+	return oc.pc.HighWaterMarkOffset()
+}
+
 func (oc *Offset) run() error {
-	c, err := sarama.NewConsumerFromClient(oc.cfg.Client)
-	if err != nil {
-		return err
-	}
-	defer c.Close()
-	pc, err := c.ConsumePartition(oc.cfg.Topic, oc.cfg.Partition, oc.cfg.Offset)
-	if err != nil {
-		return err
-	}
-	defer pc.Close()
-	ch := pc.Messages()
+	ch := oc.pc.Messages()
 	for {
 		select {
 		case <-oc.cfg.Context.Done():

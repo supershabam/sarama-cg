@@ -76,3 +76,9 @@ func (sk *Seek) Consume() <-chan *sarama.ConsumerMessage {
 func (sk *Seek) Err() error {
 	return sk.oc.Err()
 }
+
+// HighWaterMarkOffset returns the last reported highwatermark offset for the partition this
+// consumer is reading.
+func (sk *Seek) HighWaterMarkOffset() int64 {
+	return sk.oc.HighWaterMarkOffset()
+}
